@@ -2,12 +2,24 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// FileChange represents a single file to be modified.
+type FileChange struct {
+	FilePath string `json:"file_path"`
+	Content  string `json:"content"`
+}
+
+// MdiffJSON is the top-level structure for the JSON input.
+type MdiffJSON struct {
+	Changes []FileChange `json:"changes"`
+}
 
 // IgnoreMatcher holds gitignore patterns and logic.
 type IgnoreMatcher struct {
@@ -262,7 +274,7 @@ Usage:
   copilot <command> [options] <args...>
 
 Commands:
-  apply        Apply changes from an mdiff file to target files.
+  apply        Apply changes from a JSON file to target files.
   extract      Extract content from files in a directory based on extensions.
 
 Run 'copilot <command> --help' for more information on a specific command.
@@ -272,21 +284,21 @@ Run 'copilot <command> --help' for more information on a specific command.
 func printApplyUsage(fs *flag.FlagSet) {
 	fmt.Println(`
 Usage:
-  copilot apply <mdiff_file>
+  copilot apply <json_file>
 
-Apply file content changes from an mdiff file.
-The mdiff file contains blocks specifying file paths and their new content.
-Each specified file will be overwritten with the content from the mdiff file.
+Apply file content changes from a JSON file.
+The JSON file should contain an object with a "changes" array,
+where each element specifies a "file_path" and its new "content".
+Each specified file will be overwritten with the content from the JSON file.
 Parent directories for the files will be created if they don't exist.
-Paths in the mdiff file are typically relative to the current working directory.
+Paths in the JSON file are typically relative to the current working directory.
 
 Arguments:
-  <mdiff_file>       Path to the mdiff file containing file content blocks.
+  <json_file>       Path to the JSON file containing file content changes.
 
 Example:
-  copilot apply ./changes.mdiff
+  copilot apply ./changes.json
 `)
-	// fs.PrintDefaults() // No flags for apply command anymore
 }
 
 func printExtractUsage(fs *flag.FlagSet) {
@@ -330,80 +342,52 @@ func main() {
 		}
 
 		if applyCmd.NArg() != 1 {
-			fmt.Fprintln(os.Stderr, "Error: Missing <mdiff_file> argument for apply command.")
+			fmt.Fprintln(os.Stderr, "Error: Missing <json_file> argument for apply command.")
 			applyCmd.Usage()
 			os.Exit(1)
 		}
-		mdiffFilePath := applyCmd.Arg(0)
+		jsonFilePath := applyCmd.Arg(0)
 
-		mdiffContentBytes, err := os.ReadFile(mdiffFilePath)
+		jsonFileBytes, err := os.ReadFile(jsonFilePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading mdiff file '%s': %v\n", mdiffFilePath, err)
+			fmt.Fprintf(os.Stderr, "Error reading JSON file '%s': %v\n", jsonFilePath, err)
 			os.Exit(1)
 		}
 
-		contentStr := string(mdiffContentBytes)
-		currentIndex := 0
+		var mdiffData MdiffJSON
+		err = json.Unmarshal(jsonFileBytes, &mdiffData)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing JSON from file '%s': %v\n", jsonFilePath, err)
+			os.Exit(1)
+		}
+
+		if len(mdiffData.Changes) == 0 {
+			fmt.Fprintln(os.Stderr, "Warning: No changes found in the JSON file.")
+			os.Exit(0)
+		}
+
 		filesAppliedCount := 0
-
-		// Define markers
-		fileBlockStartPrefix := "\n<file_path>"
-		fileBlockStartSuffix := "</file_path>\n"
-		// Template for the end marker, will be completed with the specific file path
-
-		for currentIndex < len(contentStr) {
-			// Find the start of a file block
-			pathDeclStartIndex := strings.Index(contentStr[currentIndex:], fileBlockStartPrefix)
-			if pathDeclStartIndex == -1 {
-				// No more file blocks. Check for trailing content.
-				remainingContent := strings.TrimSpace(contentStr[currentIndex:])
-				if remainingContent != "" {
-					// fmt.Fprintf(os.Stderr, "Info: Ignoring trailing content in mdiff file: \"%s...\"\n", remainingContent[:min(20, len(remainingContent))])
-				}
-				break
+		for _, change := range mdiffData.Changes {
+			if change.FilePath == "" {
+				fmt.Fprintln(os.Stderr, "Warning: Skipping a change entry due to missing 'file_path'.")
+				continue
 			}
-			// Adjust pathDeclStartIndex to be absolute index in contentStr
-			pathDeclStartIndex += currentIndex
+			// Content can be empty, meaning the file should be emptied or created empty.
 
-			// Extract file path
-			pathStartActual := pathDeclStartIndex + len(fileBlockStartPrefix)
-			pathEndRel := strings.Index(contentStr[pathStartActual:], fileBlockStartSuffix)
-			if pathEndRel == -1 {
-				fmt.Fprintf(os.Stderr, "Error: Malformed mdiff. Missing '%s' after path declaration starting near offset %d.\n", strings.TrimSpace(fileBlockStartSuffix), pathStartActual)
-				os.Exit(1)
-			}
-			pathEndActual := pathStartActual + pathEndRel
-			filePath := contentStr[pathStartActual:pathEndActual]
-
-			// Define the specific end marker for this file
-			fileBlockEndMarker := fmt.Sprintf("\n<file_path_end>%s</file_path_end>\n", filePath)
-
-			// Extract content
-			contentActualStart := pathEndActual + len(fileBlockStartSuffix)
-			contentEndRel := strings.Index(contentStr[contentActualStart:], fileBlockEndMarker)
-			if contentEndRel == -1 {
-				fmt.Fprintf(os.Stderr, "Error: Malformed mdiff. Missing closing marker '%s' for file '%s'.\n", strings.TrimSpace(fileBlockEndMarker), filePath)
-				os.Exit(1)
-			}
-			contentActualEnd := contentActualStart + contentEndRel
-			fileContent := contentStr[contentActualStart:contentActualEnd]
-
-			// Write file content (writeInPlace handles directory creation)
-			// filePath from mdiff is used as-is. If relative, it's relative to CWD.
-			err = writeInPlace(filePath, []byte(fileContent))
+			// filePath from JSON is used as-is. If relative, it's relative to CWD.
+			err = writeInPlace(change.FilePath, []byte(change.Content))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing file '%s': %v\n", filePath, err)
+				fmt.Fprintf(os.Stderr, "Error writing file '%s': %v\n", change.FilePath, err)
 				os.Exit(1) // Or collect errors and report at the end
 			}
-			fmt.Fprintf(os.Stdout, "Successfully applied changes to %s\n", filePath)
+			fmt.Fprintf(os.Stdout, "Successfully applied changes to %s\n", change.FilePath)
 			filesAppliedCount++
-
-			// Move currentIndex to the position after the current block
-			currentIndex = contentActualEnd + len(fileBlockEndMarker)
 		}
 
 		if filesAppliedCount == 0 {
-			fmt.Fprintln(os.Stderr, "Warning: No file content blocks were found or applied from the mdiff file.")
+			// This case might be hit if all changes had empty file_paths,
+			// or if mdiffData.Changes was initially empty (already handled).
+			fmt.Fprintln(os.Stderr, "Warning: No file changes were actually applied from the JSON file.")
 		} else {
 			fmt.Fprintf(os.Stdout, "Successfully applied %d file(s).\n", filesAppliedCount)
 		}
