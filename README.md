@@ -60,7 +60,7 @@ copilot extract --gitignore ./.custom_ignore ./myproject .ts,.tsx > context.txt
 
 ### 2. `apply`
 
-Applies file content changes from a JSON file. This command reads the JSON file, parses the specified file paths and their new content, and writes the content to the target files. It will create parent directories for the files if they don't already exist.
+Applies file changes from a JSON file. This command supports both full file overwrites and partial updates to specific line ranges. It will create parent directories for files if they don't already exist.
 
 **Usage:**
 
@@ -73,13 +73,20 @@ copilot apply <json_file>
 - `<json_file>`: Path to the JSON file containing the file changes.
 
 **JSON Format:**
-The JSON file must contain a single JSON object with a top-level key named `changes`. The value of `changes` must be an array of objects, where each object represents a file to be modified and has two keys:
+The JSON file must contain a single JSON object with a top-level key named `changes`. The value of `changes` must be an array of objects, where each object represents a file to be modified. Each object has the following keys:
 
-- `file_path` (string): The path to the file that should be created or overwritten. Paths are typically relative to the current working directory where `copilot apply` is executed.
-- `content` (string): The new, complete content for the file.
+- `file_path` (string): The path to the file that should be modified. Paths are typically relative to the current working directory.
+- `content` (string): The new content to be inserted.
+- `start_line` (number, optional): The 1-based starting line number for the replacement.
+- `end_line` (number, optional): The 1-based ending line number for the replacement.
 
-**Example JSON content (`changes.json`):**
+If `start_line` and `end_line` are provided, the content between these lines (inclusive) will be replaced with the new `content`. If they are omitted, the entire file content will be replaced.
 
+**Example 1: Full File Replacement**
+
+This is the default behavior when no line numbers are specified.
+
+*Example `changes.json`:*
 ```json
 {
   "changes": [
@@ -95,11 +102,51 @@ The JSON file must contain a single JSON object with a top-level key named `chan
 }
 ```
 
-**Example `apply` command:**
-To apply the changes defined in `changes.json` to your project:
-
+*Command:*
 ```bash
 copilot apply ./changes.json
 ```
+This will overwrite `src/service/user.go` and `README.md` with the new content.
 
-This will overwrite `src/service/user.go` and `README.md` with the content specified in `changes.json`. If the `src/service/` directory does not exist, it will be created.
+**Example 2: Partial (Chunk) Update**
+
+To replace only a specific range of lines in a file, provide `start_line` and `end_line`.
+
+*Example `partial_changes.json`:*
+Suppose `main.go` contains:
+```go
+package main
+
+func main() {
+    println("Hello, World!")
+}
+```
+
+You can replace lines 3-4 with the following JSON:
+```json
+{
+  "changes": [
+    {
+      "file_path": "main.go",
+      "content": "  // New implementation\n  println(\"Hello, Universe!\")",
+      "start_line": 3,
+      "end_line": 4
+    }
+  ]
+}
+```
+
+*Command:*
+```bash
+copilot apply ./partial_changes.json
+```
+
+After running the command, `main.go` will be updated to:
+```go
+package main
+
+  // New implementation
+  println("Hello, Universe!")
+}
+```
+Note: The original line endings in the replaced block are removed. The new `content` is inserted exactly as provided.
