@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "file_path": "tests/partial_update/test_output.txt",
+      "content": "This content replaces lines 2-4.",
+      "start_line": 2,
+      "end_line": 4
+    }
+  ]
+}

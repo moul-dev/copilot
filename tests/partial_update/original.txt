@@ -1,0 +1,5 @@
+Line 1: This is the first line.
+Line 2: This line will be replaced.
+Line 3: This line will also be replaced.
+Line 4: And this one too.
+Line 5: This is the last line.

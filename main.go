@@ -12,8 +12,10 @@ import (
 
 // FileChange represents a single file to be modified.
 type FileChange struct {
-	FilePath string `json:"file_path"`
-	Content  string `json:"content"`
+	FilePath  string `json:"file_path"`
+	Content   string `json:"content"`
+	StartLine *int   `json:"start_line,omitempty"`
+	EndLine   *int   `json:"end_line,omitempty"`
 }
 
 // MdiffJSON is the top-level structure for the JSON input.
@@ -211,6 +213,57 @@ func extractFileContent(scanDirAbs string, extensions []string, ignoreMatcher *I
 	return allContent.String(), nil
 }
 
+// applyPartialChange applies content to a specific line range in a file.
+func applyPartialChange(filePath string, content string, startLine, endLine int) error {
+	// Read the original file
+	originalBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If the file doesn't exist, we can't apply a partial change.
+			return fmt.Errorf("file '%s' does not exist for partial update", filePath)
+		}
+		return fmt.Errorf("could not read file '%s' for partial update: %w", filePath, err)
+	}
+
+	lines := strings.Split(string(originalBytes), "\n")
+	numLines := len(lines)
+
+	// Basic validation for line numbers (1-based indexing from user)
+	if startLine < 1 || endLine < startLine || startLine > numLines {
+		return fmt.Errorf("invalid line range: start_line=%d, end_line=%d for file with %d lines", startLine, endLine, numLines)
+	}
+	if endLine > numLines {
+		// Allow end_line to be greater than numLines, just cap it.
+		endLine = numLines
+	}
+
+	// Build the new content
+	var finalContent strings.Builder
+
+	// Part 1: Lines before the change
+	if startLine > 1 {
+		prefix := strings.Join(lines[0:startLine-1], "\n")
+		finalContent.WriteString(prefix)
+		finalContent.WriteString("\n")
+	}
+
+	// Part 2: The new content itself
+	finalContent.WriteString(content)
+
+	// Part 3: Lines after the change
+	if endLine < numLines {
+		// Add a newline separator if the new content didn't end with one.
+		if !strings.HasSuffix(content, "\n") {
+			finalContent.WriteString("\n")
+		}
+		suffix := strings.Join(lines[endLine:numLines], "\n")
+		finalContent.WriteString(suffix)
+	}
+
+	// Write the modified content back to the file
+	return writeInPlace(filePath, []byte(finalContent.String()))
+}
+
 // writeInPlace safely writes content to a file by using a temporary file
 // and an atomic rename operation. It also preserves original file permissions.
 func writeInPlace(filePath string, content []byte) error {
@@ -287,17 +340,33 @@ Usage:
   copilot apply <json_file>
 
 Apply file content changes from a JSON file.
-The JSON file should contain an object with a "changes" array,
-where each element specifies a "file_path" and its new "content".
-Each specified file will be overwritten with the content from the JSON file.
-Parent directories for the files will be created if they don't exist.
-Paths in the JSON file are typically relative to the current working directory.
+The JSON file should contain an object with a "changes" array.
+Each element in the array is an object with the following fields:
+  - "file_path": (string) The path to the file to be modified.
+  - "content": (string) The new content to be inserted.
+  - "start_line": (number, optional) The 1-based starting line for the replacement.
+  - "end_line": (number, optional) The 1-based ending line for the replacement.
+
+If "start_line" and "end_line" are provided, the content between these lines (inclusive)
+will be replaced. Otherwise, the entire file is overwritten.
 
 Arguments:
   <json_file>       Path to the JSON file containing file content changes.
 
-Example:
+Example (full file replacement):
   copilot apply ./changes.json
+
+Example (partial file replacement from line 2 to 4):
+  {
+    "changes": [
+      {
+        "file_path": "path/to/file.txt",
+        "content": "new content for lines 2-4",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ]
+  }
 `)
 }
 
@@ -374,10 +443,15 @@ func main() {
 			}
 			// Content can be empty, meaning the file should be emptied or created empty.
 
-			// filePath from JSON is used as-is. If relative, it's relative to CWD.
-			err = writeInPlace(change.FilePath, []byte(change.Content))
+			// Decide whether to perform a full or partial update
+			if change.StartLine != nil && change.EndLine != nil {
+				err = applyPartialChange(change.FilePath, change.Content, *change.StartLine, *change.EndLine)
+			} else {
+				err = writeInPlace(change.FilePath, []byte(change.Content))
+			}
+
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing file '%s': %v\n", change.FilePath, err)
+				fmt.Fprintf(os.Stderr, "Error applying change to file '%s': %v\n", change.FilePath, err)
 				os.Exit(1) // Or collect errors and report at the end
 			}
 			fmt.Fprintf(os.Stdout, "Successfully applied changes to %s\n", change.FilePath)

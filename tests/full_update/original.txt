@@ -1,0 +1,3 @@
+This is the original content of the file.
+It has multiple lines.
+It will be completely replaced.
