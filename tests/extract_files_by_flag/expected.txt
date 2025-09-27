@@ -1,0 +1,10 @@
+<file_path>tests/extract_files_by_flag/file1.txt</file_path>
+This is file 1.
+<file_path_end>tests/extract_files_by_flag/file1.txt</file_path_end>
+<file_path>tests/extract_files_by_flag/dir/file2.go</file_path>
+package main
+
+func main() {
+	// This is file 2.
+}
+<file_path_end>tests/extract_files_by_flag/dir/file2.go</file_path_end>

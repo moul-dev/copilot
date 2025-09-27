@@ -137,10 +137,11 @@ func (m *IgnoreMatcher) IsIgnored(absItemPath string, itemIsDir bool) (bool, err
 	return false, nil
 }
 
-// extractFileContent extracts content from files in a directory based on extensions.
+// extractDirContent extracts content from files in a directory based on extensions.
 // scanDirAbs must be an absolute path to the directory to scan.
-func extractFileContent(scanDirAbs string, extensions []string, ignoreMatcher *IgnoreMatcher) (string, error) {
+func extractDirContent(scanDirAbs string, extensions []string, ignoreMatcher *IgnoreMatcher) (string, error) {
 	var allContent strings.Builder
+	firstFile := true
 
 	err := filepath.Walk(scanDirAbs, func(currentPathAbs string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -148,34 +149,25 @@ func extractFileContent(scanDirAbs string, extensions []string, ignoreMatcher *I
 			if info != nil && info.IsDir() {
 				return filepath.SkipDir
 			}
-			return nil // Skip this file/dir entry, continue walk
+			return nil
 		}
 
 		if ignoreMatcher != nil {
 			isIgnored, ignoreErr := ignoreMatcher.IsIgnored(currentPathAbs, info.IsDir())
 			if ignoreErr != nil {
-				// Don't fail the whole walk, just log it and potentially skip.
-				// Depending on desired strictness, could return ignoreErr.
 				fmt.Fprintf(os.Stderr, "Warning: error checking ignore status for %s: %v. Proceeding without ignore check for this item.\n", currentPathAbs, ignoreErr)
 			} else if isIgnored {
 				if info.IsDir() {
 					return filepath.SkipDir
 				}
-				return nil // Ignored file
+				return nil
 			}
 		}
 
 		if info.IsDir() {
-			// If it's the root directory itself, don't skip, just proceed.
-			if currentPathAbs == scanDirAbs {
-				return nil
-			}
-			// Add specific directory names to ignore if needed, e.g. ".git", "node_modules"
-			// This is better handled by .gitignore patterns, but as a fallback:
-			return nil // Regular directory, continue walking
+			return nil
 		}
 
-		// File processing
 		ext := filepath.Ext(currentPathAbs)
 		foundExt := false
 		for _, targetExt := range extensions {
@@ -189,19 +181,23 @@ func extractFileContent(scanDirAbs string, extensions []string, ignoreMatcher *I
 			content, readErr := os.ReadFile(currentPathAbs)
 			if readErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to read file %s: %v. Skipping.\n", currentPathAbs, readErr)
-				return nil // Skip this file, continue walk
+				return nil
 			}
 
 			relPath, relErr := filepath.Rel(scanDirAbs, currentPathAbs)
 			if relErr != nil {
-				// This should ideally not happen if currentPathAbs is under scanDirAbs.
 				fmt.Fprintf(os.Stderr, "Warning: failed to get relative path for %s (base %s): %v. Using absolute path.\n", currentPathAbs, scanDirAbs, relErr)
-				relPath = currentPathAbs // Fallback to absolute path
+				relPath = currentPathAbs
 			}
 
-			allContent.WriteString(fmt.Sprintf("\n<file_path>%s</file_path>\n", filepath.ToSlash(relPath)))
+			if !firstFile {
+				allContent.WriteString("\n")
+			}
+			firstFile = false
+
+			allContent.WriteString(fmt.Sprintf("<file_path>%s</file_path>\n", filepath.ToSlash(relPath)))
 			allContent.Write(content)
-			allContent.WriteString(fmt.Sprintf("\n<file_path_end>%s</file_path_end>\n", filepath.ToSlash(relPath)))
+			allContent.WriteString(fmt.Sprintf("\n<file_path_end>%s</file_path_end>", filepath.ToSlash(relPath)))
 		}
 		return nil
 	})
@@ -212,6 +208,30 @@ func extractFileContent(scanDirAbs string, extensions []string, ignoreMatcher *I
 
 	return allContent.String(), nil
 }
+
+// extractFilesContent extracts content from a list of specified files.
+func extractFilesContent(files []string) (string, error) {
+	var allContent strings.Builder
+	for i, filePath := range files {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to read file %s: %v. Skipping.\n", filePath, err)
+			continue
+		}
+
+		relPath := filepath.ToSlash(filePath)
+
+		if i > 0 {
+			allContent.WriteString("\n")
+		}
+
+		allContent.WriteString(fmt.Sprintf("<file_path>%s</file_path>\n", relPath))
+		allContent.Write(content)
+		allContent.WriteString(fmt.Sprintf("\n<file_path_end>%s</file_path_end>", relPath))
+	}
+	return allContent.String(), nil
+}
+
 
 // applyPartialChange applies content to a specific line range in a file.
 func applyPartialChange(filePath string, content string, startLine, endLine int) error {
@@ -373,22 +393,33 @@ Example (partial file replacement from line 2 to 4):
 func printExtractUsage(fs *flag.FlagSet) {
 	fmt.Println(`
 Usage:
-  copilot extract [extract_options] <directory_path> <file_extensions>
+  copilot extract [options] <args...>
 
-Extract content from files in a directory based on extensions.
-Respects .gitignore rules found in <directory_path> or specified via --gitignore.
-Outputs a structured format containing file paths and their content.
+Extract content from files. You can either specify a directory and extensions
+or a list of files.
 
-Arguments:
-  <directory_path>     Path to the directory to scan.
-  <file_extensions>    Comma-separated list of file extensions (e.g., .js,.ts,.md).
+Modes:
+  1. By directory and extensions (default):
+     copilot extract [options] <directory_path> <extensions>
+     - <directory_path>: Path to the directory to scan.
+     - <extensions>: Comma-separated file extensions (e.g., .js,.ts).
+
+  2. By specific files:
+     copilot extract --files <file1,file2,...>
+     - <file1,file2,...>: Comma-separated list of file paths.
 
 Options:`)
 	fs.PrintDefaults()
 	fmt.Println(`
 Examples:
-  copilot extract ./src .js,.ts,.json > extracted_content.txt
-  copilot extract --gitignore ./.custom_ignore ./project .go,.java > context.txt
+  # Extract from a directory
+  copilot extract ./src .js,.ts,.json > context.txt
+
+  # Extract from a directory with a custom .gitignore
+  copilot extract --gitignore ./.custom_ignore ./project .go
+
+  # Extract specific files
+  copilot extract --files package.json,main.go > context.txt
 `)
 }
 
@@ -468,7 +499,8 @@ func main() {
 
 	case "extract":
 		extractCmd := flag.NewFlagSet("extract", flag.ExitOnError)
-		gitignorePathFlag := extractCmd.String("gitignore", "", "Path to a custom .gitignore file. If not provided,\n.gitignore in <directory_path> is used if it exists.")
+		gitignorePathFlag := extractCmd.String("gitignore", "", "Path to a custom .gitignore file (for directory mode).")
+		filesFlag := extractCmd.String("files", "", "Comma-separated list of specific files to extract.")
 
 		extractCmd.Usage = func() { printExtractUsage(extractCmd) }
 
@@ -477,8 +509,26 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Mode 2: Extract specific files
+		if *filesFlag != "" {
+			if extractCmd.NArg() > 0 {
+				fmt.Fprintln(os.Stderr, "Error: Do not provide directory arguments when using the --files flag.")
+				extractCmd.Usage()
+				os.Exit(1)
+			}
+			files := strings.Split(*filesFlag, ",")
+			extractedContent, err := extractFilesContent(files)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error extracting specific files: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(extractedContent)
+			return // Done
+		}
+
+		// Mode 1: Extract from directory
 		if extractCmd.NArg() < 2 {
-			fmt.Fprintln(os.Stderr, "Error: Missing <directory_path> or <file_extensions> for extract command.")
+			fmt.Fprintln(os.Stderr, "Error: Missing <directory_path> or <file_extensions> for directory mode.")
 			extractCmd.Usage()
 			os.Exit(1)
 		}
@@ -490,7 +540,6 @@ func main() {
 		for _, ext := range rawExtensions {
 			trimmedExt := strings.TrimSpace(ext)
 			if trimmedExt != "" {
-				// Ensure extensions start with a dot if not already
 				if !strings.HasPrefix(trimmedExt, ".") {
 					trimmedExt = "." + trimmedExt
 				}
@@ -529,7 +578,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		extractedContent, err := extractFileContent(absScanDir, extensions, ignoreMatcher)
+		extractedContent, err := extractDirContent(absScanDir, extensions, ignoreMatcher)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error extracting content: %v\n", err)
 			os.Exit(1)
