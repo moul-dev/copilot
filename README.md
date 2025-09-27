@@ -86,7 +86,8 @@ If `start_line` and `end_line` are provided, the content between these lines (in
 
 This is the default behavior when no line numbers are specified.
 
-*Example `changes.json`:*
+_Example `changes.json`:_
+
 ```json
 {
   "changes": [
@@ -102,18 +103,21 @@ This is the default behavior when no line numbers are specified.
 }
 ```
 
-*Command:*
+_Command:_
+
 ```bash
 copilot apply ./changes.json
 ```
+
 This will overwrite `src/service/user.go` and `README.md` with the new content.
 
 **Example 2: Partial (Chunk) Update**
 
 To replace only a specific range of lines in a file, provide `start_line` and `end_line`.
 
-*Example `partial_changes.json`:*
+_Example `partial_changes.json`:_
 Suppose `main.go` contains:
+
 ```go
 package main
 
@@ -123,6 +127,7 @@ func main() {
 ```
 
 You can replace lines 3-4 with the following JSON:
+
 ```json
 {
   "changes": [
@@ -136,12 +141,14 @@ You can replace lines 3-4 with the following JSON:
 }
 ```
 
-*Command:*
+_Command:_
+
 ```bash
 copilot apply ./partial_changes.json
 ```
 
 After running the command, `main.go` will be updated to:
+
 ```go
 package main
 
@@ -149,4 +156,5 @@ package main
   println("Hello, Universe!")
 }
 ```
+
 Note: The original line endings in the replaced block are removed. The new `content` is inserted exactly as provided.
