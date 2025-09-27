@@ -1,0 +1,2 @@
+--files
+tests/extract_files_by_flag/file1.txt,tests/extract_files_by_flag/dir/file2.go
