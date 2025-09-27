@@ -1,0 +1,8 @@
+{
+  "changes": [
+    {
+      "file_path": "tests/full_update/test_output.txt",
+      "content": "This is a full file replacement."
+    }
+  ]
+}

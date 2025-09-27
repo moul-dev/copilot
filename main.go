@@ -220,8 +220,6 @@ func applyPartialChange(filePath string, content string, startLine, endLine int)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If the file doesn't exist, we can't apply a partial change.
-			// This could be treated as an error or a no-op.
-			// For now, let's treat it as an error because the intention was to modify.
 			return fmt.Errorf("file '%s' does not exist for partial update", filePath)
 		}
 		return fmt.Errorf("could not read file '%s' for partial update: %w", filePath, err)
@@ -240,30 +238,30 @@ func applyPartialChange(filePath string, content string, startLine, endLine int)
 	}
 
 	// Build the new content
-	var newContent strings.Builder
-	// Add lines before the start line
-	for i := 0; i < startLine-1; i++ {
-		newContent.WriteString(lines[i])
-		newContent.WriteString("\n")
+	var finalContent strings.Builder
+
+	// Part 1: Lines before the change
+	if startLine > 1 {
+		prefix := strings.Join(lines[0:startLine-1], "\n")
+		finalContent.WriteString(prefix)
+		finalContent.WriteString("\n")
 	}
 
-	// Add the new content
-	newContent.WriteString(content)
+	// Part 2: The new content itself
+	finalContent.WriteString(content)
 
-	// Add lines after the end line, if any
-	// Note: The loop condition handles the case where endLine is the last line.
+	// Part 3: Lines after the change
 	if endLine < numLines {
-		newContent.WriteString("\n")
-		for i := endLine; i < numLines; i++ {
-			newContent.WriteString(lines[i])
-			if i < numLines-1 {
-				newContent.WriteString("\n")
-			}
+		// Add a newline separator if the new content didn't end with one.
+		if !strings.HasSuffix(content, "\n") {
+			finalContent.WriteString("\n")
 		}
+		suffix := strings.Join(lines[endLine:numLines], "\n")
+		finalContent.WriteString(suffix)
 	}
 
 	// Write the modified content back to the file
-	return writeInPlace(filePath, []byte(newContent.String()))
+	return writeInPlace(filePath, []byte(finalContent.String()))
 }
 
 // writeInPlace safely writes content to a file by using a temporary file
